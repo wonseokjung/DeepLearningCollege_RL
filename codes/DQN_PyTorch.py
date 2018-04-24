@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[135]:
+# In[ ]:
 
 import gym
 from gym import wrappers
@@ -35,10 +35,10 @@ env = gym.make('ppaquette/SuperMarioBros-1-1-v0')
 env = wrappers.Monitor(env, 'gym-results', force=True)
 
 train = True
-retrain = False
+retrain = True
 
 
-# In[136]:
+# In[ ]:
 
 input_size = np.array([env.observation_space.shape[0], env.observation_space.shape[1], 15])
 output_size = 13
@@ -47,35 +47,29 @@ dis = 0.9
 REPLAY_MEMORY = 20000
 
 
-# In[137]:
+# In[ ]:
 
 def ddqn_replay_train(mainDQN, targetDQN, train_batch, l_rate):
     x_stack = np.empty(0).reshape(0, mainDQN.input_size[0]*mainDQN.input_size[1]*mainDQN.input_size[2])
     y_stack = np.empty(0).reshape(0, mainDQN.output_size)
     action_stack = np.empty(0).reshape(0, 60)
     for state, action_seq, action_next_seq, action , reward, next_state, done in train_batch:
-        print(state.shape)
-        Q = mainDQN.predict(state, action_seq)
-        print('state',state.shape)
-        print('action',action_seq[0].shape)
+        Q = mainDQN(state, action_seq)
         if done:
             Q[0, action] = reward
         else:
-            print('next_state',next_state.shape)
-            print('next-action',action_next_seq[0].shape)
-            Q[0, action] = reward + dis * targetDQN.predict(next_state, action_next_seq).max(1)[0]
+            Q[0, action] = reward + dis * targetDQN(next_state, action_next_seq).max(1)[0]
             
             
         if state is None:
             print("None State, ", action, ", ", reward, ", ", next_state,", ", done)
         else:
-            y_stack = np.vstack([y_stack, Q])
-            x_stack = np.vstack([x_stack, state.reshape(-1, mainDQN.Input_size[0]*mainDQN.input_size[1]*mainDQN.input_size[2])])
+            y_stack = np.vstack([y_stack, Q.data.numpy()])
+            x_stack = np.vstack([x_stack, state.reshape(-1, mainDQN.input_size[0]*mainDQN.input_size[1]*mainDQN.input_size[2])])
             action_stack = np.vstack([action_stack, np.reshape(action_seq, (-1, 60))])
-    print(x_stack.shape)
     
-    Qpred = mainDQN.predict(x_stack, action_seq)
-    loss = F.mse_loss(Qpred, y_stack)
+    Qpred = mainDQN(x_stack, action_stack)
+    loss = F.mse_loss(Qpred, Variable(torch.Tensor(y_stack)))
     optm = optim.Adam(mainDQN.parameters())
     optm.zero_grad()
     loss.backward()
@@ -93,7 +87,7 @@ def bot_play(mainDQN, env=env):
             action = OutputToAction3(output)
             print("random action:", output)
         else:
-            output = np.argmax(mainDQN.predict(state))
+            output = np.argmax(mainDQN(state))
             action = OutputToAction3(output)
             print("predicted action:", output)
         for n in range(len(action)):
@@ -125,7 +119,7 @@ def OutputToAction3(output):
     
 
 
-# In[138]:
+# In[ ]:
 
 import torch
 import torch.nn as nn
@@ -182,10 +176,10 @@ class DQN(nn.Module):
             nn.ReLU(),
             nn.Linear(50,self.output_size)
         )
-    def predict(self, x, y):
+    def forward(self, x, y):
         #x = np.ascontiguousarray(x, dtype=np.float32)
-        x = np.transpose(x, (2,0,1))
-        x = np.reshape(x, [1, int(self.input_size[2]), int(self.input_size[0]), int(self.input_size[1])])
+        x = np.reshape(x, [-1, 224,256,15])
+        x = np.transpose(x, (0,3,1,2))
         x = Variable(torch.Tensor(x)).type(torch.FloatTensor)
         y = Variable(torch.from_numpy(np.array(y))).type(torch.FloatTensor)
         x = self.model1(x)
@@ -197,7 +191,7 @@ class DQN(nn.Module):
    
 
 
-# In[139]:
+# In[ ]:
 
 def main():
     if train:
@@ -236,8 +230,8 @@ def main():
                     print("random action:", action_name)
                 
                 else:
-                    predicted = mainDQN.predict(acc_state, output_seq)
-                    output = np.argmax(predicted)
+                    predicted = mainDQN(acc_state, output_seq)
+                    output = int(predicted.max(1)[1].view(1,1))
                     action,action_name = OutputToAction3(output)
                     print("output:",action_name, "predicted:", predicted)
                     
@@ -302,7 +296,7 @@ def main():
                 if step_count > 100000:
                     break
                     
-                if (episode+1) % 1 == 0:
+                if (episode+1) % 10 == 0:
                     for _ in range(50):
                         if len(replay_buffer) >= 10:
                             sample_idx = random.sample(range(0, len(replay_buffer)), 10)
@@ -311,7 +305,7 @@ def main():
                                 minibatch.append(replay_buffer[i])
                             
                             l_rate = (1e-5 - 1e-4)*(1/max_episode)*episode + 1e-4
-                            loss, _ = ddqn_replay_train(mainDQN, targetDQN, minibatch, l_rate=l_rate)
+                            loss = ddqn_replay_train(mainDQN, targetDQN, minibatch, l_rate=l_rate)
                             
                             print("Loss: %.3f,  l_rate: %.6f" %(loss, l_rate))
                 
@@ -323,13 +317,13 @@ def main():
                     
                     pass # How to save the weights in PyTorch
             
-            env2 = wrappers.Monitor(env, 'gym-results', force=True)
-            for i in range(200):
-                bot_play(mainDQN, env=env2)
-            env2.close()
+            #env2 = wrappers.Monitor(env, 'gym-results', force=True)
+            #for i in range(200):
+            #    bot_play(mainDQN, env=env2)
+            #env2.close()
     else:
-        mainDQN = dqn.DQN(input_size, output_size)
-        targetDQN = dqn.DQN(input_size, output_size)
+        mainDQN = DQN(input_size, output_size)
+        targetDQN = DQN(input_size, output_size)
         for i in range(200):
             bot_play(mainDQN, env=env)
         env.close()
@@ -339,11 +333,6 @@ if __name__ == "__main__":
         
                         
                     
-
-
-# In[134]:
-
-get_ipython().run_line_magic('debug', '')
 
 
 # In[ ]:
