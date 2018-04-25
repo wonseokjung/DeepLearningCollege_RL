@@ -1,15 +1,10 @@
-
-# coding: utf-8
-
-# In[ ]:
-
 import gym
 from gym import wrappers
 import math, os, random
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-get_ipython().run_line_magic('matplotlib', 'inline')
+#get_ipython().run_line_magic('matplotlib', 'inline')
 
 from collections import namedtuple
 from collections import deque
@@ -28,17 +23,20 @@ import ppaquette_gym_super_mario
 
 checkpoint_dir = './checkpoints/'
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 use_cuda = torch.cuda.is_available()
+FloatTensor = torch.cuda.FloatTensor if use_cuda else torch.FloatTensor
+LongTensor = torch.cuda.LongTensor if use_cuda else torch.LongTensor
+ByteTensor = torch.cuda.ByteTensor if use_cuda else torch.ByteTensor
+print('CUDA!!!!!',use_cuda)
 
 env = gym.make('ppaquette/SuperMarioBros-1-1-v0')
 env = wrappers.Monitor(env, 'gym-results', force=True)
 
 train = True
-retrain = True
+retrain = False
 
 
-# In[ ]:
 
 input_size = np.array([env.observation_space.shape[0], env.observation_space.shape[1], 15])
 output_size = 13
@@ -47,7 +45,6 @@ dis = 0.9
 REPLAY_MEMORY = 20000
 
 
-# In[ ]:
 
 def ddqn_replay_train(mainDQN, targetDQN, train_batch, l_rate):
     x_stack = np.empty(0).reshape(0, mainDQN.input_size[0]*mainDQN.input_size[1]*mainDQN.input_size[2])
@@ -64,12 +61,12 @@ def ddqn_replay_train(mainDQN, targetDQN, train_batch, l_rate):
         if state is None:
             print("None State, ", action, ", ", reward, ", ", next_state,", ", done)
         else:
-            y_stack = np.vstack([y_stack, Q.data.numpy()])
+            y_stack = np.vstack([y_stack, Q.cpu().data.numpy()])
             x_stack = np.vstack([x_stack, state.reshape(-1, mainDQN.input_size[0]*mainDQN.input_size[1]*mainDQN.input_size[2])])
             action_stack = np.vstack([action_stack, np.reshape(action_seq, (-1, 60))])
     
     Qpred = mainDQN(x_stack, action_stack)
-    loss = F.mse_loss(Qpred, Variable(torch.Tensor(y_stack)))
+    loss = F.mse_loss(Qpred, Variable(torch.Tensor(y_stack)).type(FloatTensor))
     optm = optim.Adam(mainDQN.parameters())
     optm.zero_grad()
     loss.backward()
@@ -119,14 +116,8 @@ def OutputToAction3(output):
     
 
 
-# In[ ]:
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from torch.autograd import Variable
-import torchvision.transforms as T
+
 
 class DQN(nn.Module):
     def __init__ (self, input_size, output_size):
@@ -180,8 +171,8 @@ class DQN(nn.Module):
         #x = np.ascontiguousarray(x, dtype=np.float32)
         x = np.reshape(x, [-1, 224,256,15])
         x = np.transpose(x, (0,3,1,2))
-        x = Variable(torch.Tensor(x)).type(torch.FloatTensor)
-        y = Variable(torch.from_numpy(np.array(y))).type(torch.FloatTensor)
+        x = Variable(torch.Tensor(x)).type(FloatTensor)
+        y = Variable(torch.from_numpy(np.array(y))).type(FloatTensor)
         x = self.model1(x)
         x = x.view(x.size(0), 100)
         y = y.view(-1, 60)
@@ -191,7 +182,6 @@ class DQN(nn.Module):
    
 
 
-# In[ ]:
 
 def main():
     if train:
@@ -205,12 +195,14 @@ def main():
         mainDQN = DQN(input_size, output_size)
         targetDQN = DQN(input_size, output_size)
         targetDQN.load_state_dict(mainDQN.state_dict())
-        #if use_cuda:
-        #    mainDQN.cuda()
-        #    targetDQN.cuda()
+        
         
         if retrain:
-            print('how to restore in PyTorch?')
+            mainDQN = torch.load(mainDQN, 'checkpoints/mainDQN.pt')
+            
+        if use_cuda:
+            mainDQN.cuda()
+            targetDQN.cuda()
         
         for episode in range(init_episode, max_episode):
             e = 1.0 / (episode/500 + 1)
@@ -293,29 +285,29 @@ def main():
                     
                 state = next_state
                 step_count += 1
-                if step_count > 100000:
-                    break
-                    
-                if (episode+1) % 10 == 0:
-                    for _ in range(50):
-                        if len(replay_buffer) >= 10:
-                            sample_idx = random.sample(range(0, len(replay_buffer)), 10)
-                            minibatch = []
-                            for i in sample_idx:
-                                minibatch.append(replay_buffer[i])
-                            
-                            l_rate = (1e-5 - 1e-4)*(1/max_episode)*episode + 1e-4
-                            loss = ddqn_replay_train(mainDQN, targetDQN, minibatch, l_rate=l_rate)
-                            
-                            print("Loss: %.3f,  l_rate: %.6f" %(loss, l_rate))
-                
-                if (episode+1) % 2 == 0:
-                    targetDQN.load_state_dict(mainDQN.state_dict())
-                    print('weights copied')
-                
-                if (episode+1) % 100 == 0:
-                    
-                    pass # How to save the weights in PyTorch
+            if step_count > 100000:
+                break
+
+            if (episode+1) % 1 == 0:
+                for _ in range(50):
+                    if len(replay_buffer) >= 10:
+                        sample_idx = random.sample(range(0, len(replay_buffer)), 10)
+                        minibatch = []
+                        for i in sample_idx:
+                            minibatch.append(replay_buffer[i])
+
+                        l_rate = (1e-5 - 1e-4)*(1/max_episode)*episode + 1e-4
+                        loss = ddqn_replay_train(mainDQN, targetDQN, minibatch, l_rate=l_rate)
+
+                        print("Loss: %.3f,  l_rate: %.6f" %(loss, l_rate))
+
+            if (episode+1) % 2 == 0:
+                targetDQN.load_state_dict(mainDQN.state_dict())
+                print('weights copied')
+
+            if (episode+1) % 100 == 0:
+
+                torch.save(mainDQN, 'checkpoints/mainDQN.pt')
             
             #env2 = wrappers.Monitor(env, 'gym-results', force=True)
             #for i in range(200):
@@ -335,7 +327,6 @@ if __name__ == "__main__":
                     
 
 
-# In[ ]:
 
 
 
